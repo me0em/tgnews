@@ -2,8 +2,8 @@ package tools
 
 import (
 	"io/ioutil"
-	"strings"
 	"math"
+	"strings"
 )
 
 // Delete all html tags
@@ -17,10 +17,10 @@ func Dvornik(article string) []string {
 		char := string(article[carrage])
 
 		if IsPunctuation(char) {
-            article = article[:carrage] + article[carrage+1:]
-    		length -= 1
-    		carrage -= 1
-        }
+			article = article[:carrage] + article[carrage+1:]
+			length -= 1
+			carrage -= 1
+		}
 
 		if char == "<" {
 			memory_carrage = carrage
@@ -44,7 +44,7 @@ func Dvornik(article string) []string {
 }
 
 // Construct array of bi-grams, sorted with respect
-// on frequency
+// to frequency
 func biGrams(words []string) []string {
 	freqMap := make(map[string]int)
 	var length int
@@ -123,10 +123,21 @@ func DetectLanguage(words []string, amount int) string {
 	return predictedLang
 }
 
+// TODO: мб удалять HashTable если не нужен
 // Type represents frequency analysis
 type frequency struct {
-	HashTable map[string]int // all bag-ow-words data
-	Top       []string       // Only top of words
+	Filename        string
+	HashTable       map[string]int // all bag-ow-words data
+	Top             []string       // Only top of words
+	CuttedHashTable map[string]int // bag-ow-words data cutted with respect to Top
+}
+
+func (f frequency) ReduceMap() {
+	for _, word := range f.Top {
+		if amount, isKeyExists := f.HashTable[word]; isKeyExists {
+			f.CuttedHashTable[word] = amount
+		}
+	}
 }
 
 func BagOfWords(words []string, top int) frequency {
@@ -213,4 +224,82 @@ func SimilarityMeasure(frequencyA, frequencyB frequency) float64 {
 	}
 
 	return float64(intersectionSum / (unionSum - intersectionSum))
+}
+
+// Property of pages groups with respect to similarity measure
+type GroupProperties struct {
+	Class    int
+	Distance float64
+}
+
+func makeThreads(textObjects []frequency, lang string) {
+	var groupedTexts map[string]GroupProperties // map with groups
+	class := 1                                  // similar news will have the same class
+
+	if lang == "ru" {
+		similarityCoeff := 0.16
+	}
+	if lang == "en" {
+		similarityCoeff := 0.22
+	}
+
+	bowOverFiles := BagOfWordsOverFiles(paths, 30)
+
+	for counterUp, textObjectUp := range textObjects {
+
+		for counter, textObject := range textObjects {
+
+			if counter > counterUp {
+				tfidf1 := TFIDF(textObjectUp, bowOverFiles)
+				tfidf2 := TFIDF(textObject, bowOverFiles)
+				measure := SimilarityMeasure(tfidf1, tfidf2)
+
+				if measure > similarityCoeff {
+
+					if groupedTexts[textObjectUp.Filename] == (GroupProperties{}) && groupedTexts[textObject.Filename] == (GroupProperties{}) {
+						groupedTexts[textObjectUp.Filename] == GroupProperties{class, measure}
+						groupedTexts[textObject.Filename] == GroupProperties{class, measure}
+						class += 1
+					}
+
+					if groupedTexts[textObjectUp.Filename] != (GroupProperties{}) && groupedTexts[textObject.Filename] != (GroupProperties{}) {
+
+						if groupedTexts[textObjectUp.Filename].Class != groupedTexts[textObject.Filename].Class {
+
+							if measure > groupedTexts[textObjectUp.Filename].Distance || measure > groupedTexts[textObjectUp.Filename].Distance {
+								if groupedTexts[textObjectUp.Filename].Distance > groupedTexts[textObjectUp.Filename].Distance {
+									groupedTexts[textObjectUp.Filename].Distance = (groupedTexts[textObjectUp.Filename].Distance + measure) / 2
+									groupedTexts[textObject.Filename] = GroupProperties{
+										groupedTexts[textObjectUp.Filename].Class,
+										(groupedTexts[textObject.Filename].Distance + measure) / 2,
+									}
+								} else {
+									groupedTexts[textObjectUp.Filename] = GroupProperties{
+										groupedTexts[textObject.Filename].Class,
+										(groupedTexts[textObjectUp.Filename].Distance + measure) / 2,
+									}
+									groupedTexts[textObject.Filename].Distance = (groupedTexts[textObject.Filename].Distance + measure) / 2
+								}
+							}
+						}
+
+						if groupedTexts[textObjectUp.Filename] != (GroupProperties{}) && groupedTexts[textObject.Filename] == (GroupProperties{}) {
+							groupedTexts[textObject.Filename] = GroupProperties{
+								groupedTexts[textObjectUp.Filename].Class,
+								measure,
+							}
+						}
+
+						if groupedTexts[textObjectUp.Filename] == (GroupProperties{}) && groupedTexts[textObject.Filename] != (GroupProperties{}) {
+							groupedTexts[textObjectUp.Filename] = GroupProperties{
+								groupedTexts[textObject.Filename].Class,
+								measure,
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return groupedTexts
 }
