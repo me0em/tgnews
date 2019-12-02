@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"sort"
+	// "fmt"
 )
 
 /*
@@ -59,7 +60,7 @@ func LoadProfile(filename string) profiles {
 	return prf
 }
 
-func Min(x, y int) int {
+func Min(x, y float64) float64 {
 	if x <= y {
 		return x
 	}
@@ -116,7 +117,7 @@ func IsPunctuation(char string) bool {
 		return true
 	}
 
-	if char == "8" || char == "9" || char == "0" {
+	if char == "8" || char == "9" || char == "0" ||  char == "\""{
 		return true
 	}
 	return false
@@ -133,12 +134,12 @@ func IsPunctuation(char string) bool {
 type void struct{}
 
 type Set struct {
-	Data map[string]void // empty set
+	Data map[string]*void // empty set
 }
 
 func (s Set) Add(value string) {
 	var illusion void
-	s.Data[value] = illusion
+	s.Data[value] = &illusion
 }
 
 func (s Set) Delete(value string) {
@@ -156,7 +157,7 @@ func (s Set) IsExists(value string) bool {
 
 func (a Set) Union(b Set) Set {
 	c := a
-	for value := range b.Data {
+	for value := range(b.Data) {
 		if c.IsExists(value) == false {
 			c.Add(value)
 		}
@@ -166,7 +167,8 @@ func (a Set) Union(b Set) Set {
 
 func (a Set) Intersection(b Set) Set {
 	var c Set
-	for value := range b.Data {
+	c.Data = make(map[string]*void)
+	for value := range(b.Data) {
 		if a.IsExists(value) {
 			c.Add(value)
 		}

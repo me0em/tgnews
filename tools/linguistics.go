@@ -2,7 +2,10 @@ package tools
 
 import (
 	"io/ioutil"
+	"fmt"
 	"math"
+	"path/filepath"
+	// "regexp"
 	"strings"
 )
 
@@ -45,15 +48,18 @@ func Dvornik(article string) []string {
 
 // Construct array of bi-grams, sorted with respect
 // to frequency
-func biGrams(words []string) []string {
+func BiGrams(words []string) []string {
 	freqMap := make(map[string]int)
 	var length int
 
 	for _, word := range words {
-		length = len(word)
+		runeWord := []rune(word)
+		length = len(runeWord)
 
 		for i := 0; i < length-1; i++ {
-			currStr := word[i : i+2]
+			a := runeWord[i]
+			b := runeWord[i+1]
+			currStr := fmt.Sprintf("%s%s", string(a), string(b))
 
 			if _, isKeyExists := freqMap[currStr]; isKeyExists {
 				freqMap[currStr] += 1
@@ -88,8 +94,9 @@ func OutOfPlaceMeasure(x, y []string) int {
 // DetectLanguage predicts the language of the text.
 // If you don't want to determine :amount:, then pass amount = -1
 func DetectLanguage(words []string, amount int) string {
-	lgProfiles := LoadProfile("language_profiles.json")
-	biGramsData := biGrams(words)
+	lgProfiles := LoadProfile("language_profiles.json") // TODO
+	biGramsData := BiGrams(words)
+
 	length := len(biGramsData)
 
 	// Calculate amount of bi_grams that will be passed to OutOfPlaceMeasure
@@ -125,14 +132,16 @@ func DetectLanguage(words []string, amount int) string {
 
 // TODO: мб удалять HashTable если не нужен
 // Type represents frequency analysis
-type frequency struct {
+type Frequency struct {
 	Filename        string
 	HashTable       map[string]int // all bag-ow-words data
 	Top             []string       // Only top of words
 	CuttedHashTable map[string]int // bag-ow-words data cutted with respect to Top
 }
 
-func (f frequency) ReduceMap() {
+func (f Frequency) ReduceMap() {
+	f.CuttedHashTable = make(map[string]int)
+
 	for _, word := range f.Top {
 		if amount, isKeyExists := f.HashTable[word]; isKeyExists {
 			f.CuttedHashTable[word] = amount
@@ -140,8 +149,8 @@ func (f frequency) ReduceMap() {
 	}
 }
 
-func BagOfWords(words []string, top int) frequency {
-	var freq frequency
+func BagOfWords(words []string, top int) Frequency {
+	var freq Frequency
 	freq.HashTable = make(map[string]int)
 
 	for _, word := range words {
@@ -156,36 +165,8 @@ func BagOfWords(words []string, top int) frequency {
 	return freq
 }
 
-func BagOfWordsOverFiles(filePaths []string, top int) frequency {
-	var freq frequency
-	freq.HashTable = make(map[string]int)
-
-	for _, filePath := range filePaths {
-		tmpMap := make(map[string]int)
-		htmlData, _ := ioutil.ReadFile(filePath)
-		words := Dvornik(string(htmlData))
-
-		for _, word := range words {
-			if _, isKeyExists := tmpMap[word]; isKeyExists {
-				tmpMap[word] += 1
-			} else {
-				tmpMap[word] = 1
-			}
-		}
-
-		for key, _ := range tmpMap {
-			if _, isKeyExists := freq.HashTable[key]; isKeyExists {
-				freq.HashTable[key] += 1
-			} else {
-				freq.HashTable[key] = 1
-			}
-		}
-	}
-	return freq
-}
-
 // en.wikipedia.org/wiki/Tf%E2%80%93idf
-func TFIDF(textFreq frequency, corpusBagOfWords map[string]int, corpusLength int) map[string]float64 {
+func TFIDF(textFreq Frequency, corpusBagOfWords map[string]int, corpusLength int) map[string]float64 {
 	result := make(map[string]float64)
 	topAmount := 0
 	for _, word := range textFreq.Top {
@@ -198,29 +179,34 @@ func TFIDF(textFreq frequency, corpusBagOfWords map[string]int, corpusLength int
 	return result
 }
 
-func SimilarityMeasure(frequencyA, frequencyB frequency) float64 {
+func SimilarityMeasure(hashTableA, hashTableB map[string]float64) float64 {
 	var (
 		a Set
 		b Set
 	)
 
-	for _, v := range frequencyA.Top {
-		a.Add(v)
+	a.Data = make(map[string]*void)
+	b.Data = make(map[string]*void)
+	// c.Data = make(map[string]*void)
+
+	for k, _ := range hashTableA {
+		a.Add(k)
 	}
-	for _, v := range frequencyB.Top {
-		b.Add(v)
+	for k, _ := range hashTableB {
+		b.Add(k)
 	}
+
 	c := a.Intersection(b)
 
-	intersectionSum := 0
+	intersectionSum := 0.0
 	for v, _ := range c.Data {
-		intersectionSum += Min(frequencyA.HashTable[v], frequencyB.HashTable[v])
+		intersectionSum += Min(hashTableA[v], hashTableB[v])
 	}
 
 	c = a.Union(b)
-	unionSum := 0
+	unionSum := 0.0
 	for v, _ := range c.Data {
-		unionSum += frequencyA.HashTable[v] + frequencyB.HashTable[v]
+		unionSum += hashTableA[v] + hashTableB[v]
 	}
 
 	return float64(intersectionSum / (unionSum - intersectionSum))
@@ -232,68 +218,69 @@ type GroupProperties struct {
 	Distance float64
 }
 
-func makeThreads(textObjects []frequency, lang string) {
-	var groupedTexts map[string]GroupProperties // map with groups
-	class := 1                                  // similar news will have the same class
+func MakeThreads(textObjects []Frequency, bowOverFiles map[string]int, paths []string, lang string) map[int]*output {
+	// var groupedTexts = make(map[string]*GroupProperties) // map with groups
+	class := 1 // similar news will have the same class
+	length := len(paths)
+	var classArr = make([]int, length)
+	var distances = make([]float64, length)
+	// var titles []float64
 
+	for i, _ := range classArr {
+		classArr[i] = -1
+	}
+
+	var similarityCoeff float64
 	if lang == "ru" {
-		similarityCoeff := 0.16
+		similarityCoeff = 0.16
 	}
 	if lang == "en" {
-		similarityCoeff := 0.22
+		similarityCoeff = 0.18
 	}
 
-	bowOverFiles := BagOfWordsOverFiles(paths, 30)
+	for counterUp, _ := range textObjects {
 
-	for counterUp, textObjectUp := range textObjects {
-
-		for counter, textObject := range textObjects {
+		for counter, _ := range textObjects {
 
 			if counter > counterUp {
-				tfidf1 := TFIDF(textObjectUp, bowOverFiles)
-				tfidf2 := TFIDF(textObject, bowOverFiles)
+
+				tfidf1 := TFIDF(textObjects[counterUp], bowOverFiles, len(paths))
+				tfidf2 := TFIDF(textObjects[counter], bowOverFiles, len(paths))
 				measure := SimilarityMeasure(tfidf1, tfidf2)
 
 				if measure > similarityCoeff {
 
-					if groupedTexts[textObjectUp.Filename] == (GroupProperties{}) && groupedTexts[textObject.Filename] == (GroupProperties{}) {
-						groupedTexts[textObjectUp.Filename] == GroupProperties{class, measure}
-						groupedTexts[textObject.Filename] == GroupProperties{class, measure}
+					if classArr[counterUp] == -1 && classArr[counter] == -1 {
+						classArr[counterUp] = class
+						classArr[counter] = class
+						distances[counterUp] = measure
+						distances[counter] = measure
 						class += 1
 					}
 
-					if groupedTexts[textObjectUp.Filename] != (GroupProperties{}) && groupedTexts[textObject.Filename] != (GroupProperties{}) {
+					if classArr[counterUp] != -1 && classArr[counter] == -1 {
+						classArr[counter] = classArr[counterUp]
+						distances[counter] = measure
+					}
 
-						if groupedTexts[textObjectUp.Filename].Class != groupedTexts[textObject.Filename].Class {
+					if classArr[counterUp] == -1 && classArr[counter] != -1 {
+						classArr[counterUp] = classArr[counter]
+						distances[counterUp] = measure
+					}
 
-							if measure > groupedTexts[textObjectUp.Filename].Distance || measure > groupedTexts[textObjectUp.Filename].Distance {
-								if groupedTexts[textObjectUp.Filename].Distance > groupedTexts[textObjectUp.Filename].Distance {
-									groupedTexts[textObjectUp.Filename].Distance = (groupedTexts[textObjectUp.Filename].Distance + measure) / 2
-									groupedTexts[textObject.Filename] = GroupProperties{
-										groupedTexts[textObjectUp.Filename].Class,
-										(groupedTexts[textObject.Filename].Distance + measure) / 2,
-									}
+					if classArr[counterUp] != -1 && classArr[counter] != -1 {
+						if classArr[counterUp] != classArr[counter] {
+
+							if measure > distances[counter] || measure > distances[counterUp] {
+								if distances[counterUp] > distances[counter] {
+									classArr[counter] = classArr[counterUp]
+									distances[counter] = (distances[counter] + measure) / 2
+									distances[counterUp] = (distances[counterUp] + measure) / 2
 								} else {
-									groupedTexts[textObjectUp.Filename] = GroupProperties{
-										groupedTexts[textObject.Filename].Class,
-										(groupedTexts[textObjectUp.Filename].Distance + measure) / 2,
-									}
-									groupedTexts[textObject.Filename].Distance = (groupedTexts[textObject.Filename].Distance + measure) / 2
+									classArr[counterUp] = classArr[counter]
+									distances[counterUp] = (distances[counterUp] + measure) / 2
+									distances[counter] = (distances[counter] + measure) / 2
 								}
-							}
-						}
-
-						if groupedTexts[textObjectUp.Filename] != (GroupProperties{}) && groupedTexts[textObject.Filename] == (GroupProperties{}) {
-							groupedTexts[textObject.Filename] = GroupProperties{
-								groupedTexts[textObjectUp.Filename].Class,
-								measure,
-							}
-						}
-
-						if groupedTexts[textObjectUp.Filename] == (GroupProperties{}) && groupedTexts[textObject.Filename] != (GroupProperties{}) {
-							groupedTexts[textObjectUp.Filename] = GroupProperties{
-								groupedTexts[textObject.Filename].Class,
-								measure,
 							}
 						}
 					}
@@ -301,5 +288,77 @@ func makeThreads(textObjects []frequency, lang string) {
 			}
 		}
 	}
-	return groupedTexts
+
+	var result = make(map[int]*output)
+	var maxDistances = make(map[int]int)
+
+	for ind, v := range classArr {
+		if v != -1 {
+			if result[v] == nil {
+				result[v] = &output{"Test", nil}
+			}
+			currInd, _ := maxDistances[v]
+			if distances[ind] > distances[currInd] {
+				maxDistances[v] = ind
+			}
+			result[v].FilePaths = append(result[v].FilePaths, filepath.Base(paths[ind]))
+		}
+	}
+
+	for k, v := range result {
+		// re := regexp.MustCompile(`title" content="[a-zA-Zа-яА-Я0-9- \"\&\*’ ' :,. !?]*/>`)
+		fmt.Println(paths[maxDistances[k]])
+		data, _ := ioutil.ReadFile(paths[maxDistances[k]])
+		// title := re.Find(data)
+			// if title == "" {
+					// fmt.Println("\n\ntitle", string(title))
+					// fmt.Println(":", string(title))
+			// }
+		title := GetInnerSubstring(string(data), `title" content="`, "\"/>")
+
+		if string(title) != "" {
+			v.Title = string(title)
+		}
+	}
+
+	return result
+}
+
+type output struct {
+	Title     string
+	FilePaths []string
+}
+
+
+func GetInnerSubstring(str string, prefix string, suffix string) string {
+	var beginIndex, endIndex int
+	beginIndex = strings.Index(str, prefix)
+	if beginIndex == -1 {
+		beginIndex = 0
+		endIndex = 0
+	} else if len(prefix) == 0 {
+		beginIndex = 0
+		endIndex = strings.Index(str, suffix)
+		if endIndex == -1 || len(suffix) == 0 {
+			endIndex = len(str)
+		}
+	} else {
+		beginIndex += len(prefix)
+		endIndex = strings.Index(str[beginIndex:], suffix)
+		if endIndex == -1 {
+			if strings.Index(str, suffix) < beginIndex {
+				endIndex = beginIndex
+			} else {
+				endIndex = len(str)
+			}
+		} else {
+			if len(suffix) == 0 {
+				endIndex = len(str)
+			} else {
+				endIndex += beginIndex
+			}
+		}
+	}
+
+	return str[beginIndex:endIndex]
 }
